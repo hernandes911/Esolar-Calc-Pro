@@ -1,0 +1,7 @@
+{
+  "name": "SolarCalc Pro",
+  "description": "Sistema profissional de dimensionamento fotovoltaico com gestão de clientes e relatórios.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
