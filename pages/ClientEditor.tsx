@@ -15,7 +15,8 @@ import { Toast } from '../components/Toast';
 import { 
     ArrowLeft, ArrowRight, Save, FileDown, Zap, Sun, User, BarChart3, 
     MapPin, Loader2, DollarSign, PiggyBank, TrendingUp, CheckCircle, 
-    Clock, FileText, Settings, Hammer, Flag, Calendar, CreditCard, Tag, Package, DownloadCloud, Trash2, Plus
+    Clock, FileText, Settings, Hammer, Flag, Calendar, CreditCard, Tag, Package, DownloadCloud, Trash2, Plus,
+    MessageCircle, Mail, Share2
 } from 'lucide-react';
 import { jsPDF } from "jspdf";
 import autoTable from 'jspdf-autotable';
@@ -119,6 +120,10 @@ const ClientEditor: React.FC = () => {
   // Auto-save logic (debounce could be added for optimization)
   useEffect(() => {
     if (client) {
+      // NOTE: We don't block auto-save for validation, but we will block "Final Save" and "Next"
+      // saveClient(client); 
+      // Manual save preferred for validation check, or silent save.
+      // Keeping silent save for data safety, but validation on actions.
       saveClient(client);
     }
   }, [client]);
@@ -166,6 +171,22 @@ const ClientEditor: React.FC = () => {
 
   if (!client || !results) return <div className="p-10 text-center">Carregando...</div>;
 
+  const validateFields = () => {
+      if (!client.name.trim()) return "O Nome Completo é obrigatório.";
+      if (!client.cpf.trim()) return "O CPF é obrigatório.";
+      if (!client.phone.trim()) return "O Telefone é obrigatório.";
+      if (!client.email.trim()) return "O E-mail é obrigatório.";
+      
+      if (!client.address.zip.trim()) return "O CEP é obrigatório.";
+      if (!client.address.street.trim()) return "A Rua é obrigatória.";
+      if (!client.address.number.trim()) return "O Número é obrigatório.";
+      if (!client.address.neighborhood.trim()) return "O Bairro é obrigatório.";
+      if (!client.address.city.trim()) return "A Cidade é obrigatória.";
+      if (!client.address.state.trim()) return "O Estado é obrigatório.";
+
+      return null;
+  };
+
   const updateClientField = (field: keyof Client, value: any) => {
     setClient(prev => {
         if (!prev) return null;
@@ -178,6 +199,12 @@ const ClientEditor: React.FC = () => {
   };
 
   const updateStatus = (newStatus: ProjectStatus) => {
+    const error = validateFields();
+    if (error) {
+        setShowToast({ message: `Complete o cadastro: ${error}`, type: 'error' });
+        return;
+    }
+    
     setClient(prev => prev ? ({ 
         ...prev, 
         status: newStatus,
@@ -214,9 +241,28 @@ const ClientEditor: React.FC = () => {
 
   const handleSave = () => {
     if (client) {
+        const error = validateFields();
+        if (error) {
+            setShowToast({ message: error, type: 'error' });
+            // We still save draft, but warn user
+            saveClient(client);
+            return;
+        }
+
         saveClient(client);
-        setShowToast({ message: 'Cliente salvo no banco de dados local!', type: 'success' });
+        setShowToast({ message: 'Cliente salvo com sucesso!', type: 'success' });
     }
+  };
+
+  const handleNextTab = (nextTab: typeof activeTab) => {
+      if (activeTab === 'info') {
+          const error = validateFields();
+          if (error) {
+              setShowToast({ message: error, type: 'error' });
+              return;
+          }
+      }
+      setActiveTab(nextTab);
   };
 
   const handleCepChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -298,7 +344,7 @@ const ClientEditor: React.FC = () => {
 
   // Mock function to simulate Solfacil integration
   const importSolfacilMock = () => {
-    setShowToast({ message: 'Buscando dados na Solfácil...', type: 'success' });
+    setShowToast({ message: 'Buscando dados...', type: 'success' });
     setTimeout(() => {
         const mockKitPrice = 12500.00;
         const mockMaterials: MaterialItem[] = [
@@ -324,14 +370,25 @@ const ClientEditor: React.FC = () => {
   };
 
   const generatePDF = () => {
+    const error = validateFields();
+    if (error) {
+        setShowToast({ message: `Não é possível gerar o PDF. ${error}`, type: 'error' });
+        return;
+    }
+
     // Use any to bypass TypeScript errors with jspdf-autotable extensions
     const doc: any = new jsPDF();
     const settings = getSettings();
     
     // --- COLORS ---
-    // RGB(184, 134, 11) -> Dark Goldenrod (Darker Yellow)
-    const PRIMARY_COLOR: [number, number, number] = [184, 134, 11]; 
-    const PRIMARY_COLOR_HEX = '#b8860b';
+    // Yellow-500 (Vibrant Yellow/Gold) - Adjusted to Request
+    const PRIMARY_COLOR: [number, number, number] = [234, 179, 8]; 
+    const PRIMARY_COLOR_HEX = '#eab308';
+
+    // --- EXPIRATION DATE ---
+    const creationDate = new Date();
+    const expirationDate = new Date();
+    expirationDate.setDate(creationDate.getDate() + 30);
 
     // --- LOGO GENERATION ---
     if (settings.logo) {
@@ -379,7 +436,12 @@ const ClientEditor: React.FC = () => {
     
     doc.setFontSize(10);
     doc.setTextColor(100);
-    doc.text(`Gerado em: ${new Date().toLocaleDateString()} - SolarCalc Pro`, 42, 28);
+    doc.text(`Gerado em: ${creationDate.toLocaleDateString()} - SolarCalc Pro`, 42, 28);
+    // Add Expiration Date
+    doc.setTextColor(220, 38, 38); // Red color for expiration
+    doc.setFont("helvetica", "bold");
+    doc.text(`Validade da Proposta: ${expirationDate.toLocaleDateString()}`, 42, 33);
+    doc.setFont("helvetica", "normal");
 
     // Decorative Line
     doc.setDrawColor(229, 231, 235); // gray-200
@@ -557,14 +619,9 @@ const ClientEditor: React.FC = () => {
         item.brand
     ]);
 
-    // FIX: Calculate start Y relative to the chart (bottom of legend)
-    let materialStartY = legendY + 20;
-
-    // Check if we need a page break before starting the list
-    if (materialStartY > 260) {
-        doc.addPage();
-        materialStartY = 30;
-    }
+    // Force page break before Materials List so it doesn't get cut off
+    doc.addPage();
+    let materialStartY = 30;
 
     // Always create a table for materials if there are items
     if (client.materials.length > 0) {
@@ -684,6 +741,38 @@ const ClientEditor: React.FC = () => {
     return date;
   };
 
+  const handleShareWhatsApp = () => {
+    if (!client.phone) {
+        setShowToast({ message: 'Telefone do cliente não cadastrado.', type: 'error' });
+        return;
+    }
+    
+    // Simple cleaning: remove non-digits
+    let phone = client.phone.replace(/\D/g, '');
+    
+    // Add Brazil country code if missing (heuristic: length 10 or 11)
+    if (phone.length >= 10 && phone.length <= 11) {
+        phone = '55' + phone;
+    }
+
+    const message = `Olá ${client.name}, tudo bem? \n\nSegue a proposta de energia solar que preparamos para você. \n\nQualquer dúvida estou à disposição!`;
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
+  };
+
+  const handleShareEmail = () => {
+    if (!client.email) {
+        setShowToast({ message: 'E-mail do cliente não cadastrado.', type: 'error' });
+        return;
+    }
+    
+    const subject = `Proposta de Energia Solar - ${client.name}`;
+    const body = `Olá ${client.name},\n\nConforme conversamos, segue em anexo a proposta de dimensionamento fotovoltaico para sua análise.\n\nFico à disposição para esclarecer qualquer dúvida.\n\nAtenciosamente,\nSolarCalc Pro`;
+    
+    const url = `mailto:${client.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(url, '_blank');
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
       {/* Toast */}
@@ -730,31 +819,31 @@ const ClientEditor: React.FC = () => {
         {/* Tabs */}
         <div className="mb-6 flex flex-wrap gap-2 overflow-x-auto rounded-xl bg-white p-1 shadow-sm">
           <button 
-            onClick={() => setActiveTab('info')}
+            onClick={() => handleNextTab('info')}
             className={`flex flex-1 min-w-[120px] items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === 'info' ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-50'}`}
           >
             <User size={16} /> Dados Cliente
           </button>
           <button 
-            onClick={() => setActiveTab('consumption')}
+            onClick={() => handleNextTab('consumption')}
             className={`flex flex-1 min-w-[120px] items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === 'consumption' ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-50'}`}
           >
             <Zap size={16} /> Consumo
           </button>
           <button 
-            onClick={() => setActiveTab('irradiation')}
+            onClick={() => handleNextTab('irradiation')}
             className={`flex flex-1 min-w-[120px] items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === 'irradiation' ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-50'}`}
           >
             <Sun size={16} /> Irradiação
           </button>
           <button 
-            onClick={() => setActiveTab('results')}
+            onClick={() => handleNextTab('results')}
             className={`flex flex-1 min-w-[120px] items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === 'results' ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-50'}`}
           >
             <BarChart3 size={16} /> Resultados
           </button>
           <button 
-            onClick={() => setActiveTab('status')}
+            onClick={() => handleNextTab('status')}
             className={`flex flex-1 min-w-[120px] items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition ${activeTab === 'status' ? 'bg-amber-100 text-amber-800' : 'text-slate-500 hover:bg-slate-50'}`}
           >
             <CheckCircle size={16} /> Status
@@ -767,23 +856,23 @@ const ClientEditor: React.FC = () => {
             <div className="rounded-xl bg-white p-6 shadow-sm animate-fade-in">
               <h2 className="mb-4 text-lg font-bold text-slate-800">Informações Pessoais</h2>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <InputGroup label="Nome Completo" value={client.name} onChange={e => updateClientField('name', e.target.value)} placeholder="Ex: João Silva" />
+                <InputGroup label="Nome Completo *" value={client.name} onChange={e => updateClientField('name', e.target.value)} placeholder="Ex: João Silva" />
                 <InputGroup 
-                    label="CPF" 
+                    label="CPF *" 
                     value={client.cpf || ''} 
                     onChange={e => updateClientField('cpf', formatCPF(e.target.value))} 
                     placeholder="000.000.000-00"
                     maxLength={14}
                 />
-                <InputGroup label="Telefone" value={client.phone} onChange={e => updateClientField('phone', formatPhone(e.target.value))} placeholder="(00) 00000-0000" />
-                <InputGroup label="E-mail" type="email" value={client.email} onChange={e => updateClientField('email', e.target.value)} placeholder="joao@exemplo.com" />
+                <InputGroup label="Telefone *" value={client.phone} onChange={e => updateClientField('phone', formatPhone(e.target.value))} placeholder="(00) 00000-0000" />
+                <InputGroup label="E-mail *" type="email" value={client.email} onChange={e => updateClientField('email', e.target.value)} placeholder="joao@exemplo.com" />
                 
                 <div className="md:col-span-2">
                     <h3 className="mb-2 mt-4 text-sm font-semibold text-slate-500 uppercase tracking-wider">Endereço</h3>
                 </div>
                 
                 <InputGroup 
-                  label="CEP" 
+                  label="CEP *" 
                   value={client.address.zip} 
                   onChange={handleCepChange} 
                   isLoading={isLoadingCep}
@@ -791,11 +880,11 @@ const ClientEditor: React.FC = () => {
                   maxLength={9}
                 />
                 
-                <InputGroup label="Rua" value={client.address.street} onChange={e => updateAddress('street', e.target.value)} />
-                <InputGroup label="Número" value={client.address.number} onChange={e => updateAddress('number', e.target.value)} />
-                <InputGroup label="Bairro" value={client.address.neighborhood} onChange={e => updateAddress('neighborhood', e.target.value)} />
-                <InputGroup label="Cidade" value={client.address.city} onChange={e => updateAddress('city', e.target.value)} />
-                <InputGroup label="Estado" value={client.address.state} onChange={e => updateAddress('state', e.target.value)} />
+                <InputGroup label="Rua *" value={client.address.street} onChange={e => updateAddress('street', e.target.value)} />
+                <InputGroup label="Número *" value={client.address.number} onChange={e => updateAddress('number', e.target.value)} />
+                <InputGroup label="Bairro *" value={client.address.neighborhood} onChange={e => updateAddress('neighborhood', e.target.value)} />
+                <InputGroup label="Cidade *" value={client.address.city} onChange={e => updateAddress('city', e.target.value)} />
+                <InputGroup label="Estado *" value={client.address.state} onChange={e => updateAddress('state', e.target.value)} />
                 
                 {/* New Notes Field */}
                 <div className="md:col-span-2 mt-2">
@@ -818,7 +907,7 @@ const ClientEditor: React.FC = () => {
                   Salvar
                 </button>
                 <button 
-                  onClick={() => setActiveTab('consumption')}
+                  onClick={() => handleNextTab('consumption')}
                   className="flex items-center gap-2 rounded-lg bg-slate-800 px-6 py-2 text-sm font-medium text-white hover:bg-slate-700 shadow-sm"
                 >
                   Próximo
@@ -955,14 +1044,14 @@ const ClientEditor: React.FC = () => {
                 
                 <div className="mt-8 flex items-center justify-between border-t border-slate-100 pt-6">
                     <button 
-                        onClick={() => setActiveTab('info')} 
+                        onClick={() => handleNextTab('info')} 
                         className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                         <ArrowLeft size={16} />
                         Voltar
                     </button>
                     <button 
-                        onClick={() => setActiveTab('irradiation')} 
+                        onClick={() => handleNextTab('irradiation')} 
                         className="flex items-center gap-2 rounded-lg bg-slate-800 px-6 py-2 text-sm font-medium text-white hover:bg-slate-700 shadow-sm"
                     >
                         Próximo
@@ -1021,14 +1110,14 @@ const ClientEditor: React.FC = () => {
               
               <div className="mt-8 flex items-center justify-between border-t border-slate-100 pt-6">
                   <button 
-                      onClick={() => setActiveTab('consumption')} 
+                      onClick={() => handleNextTab('consumption')} 
                       className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   >
                       <ArrowLeft size={16} />
                       Voltar
                   </button>
                   <button 
-                      onClick={() => setActiveTab('results')} 
+                      onClick={() => handleNextTab('results')} 
                       className="flex items-center gap-2 rounded-lg bg-slate-800 px-6 py-2 text-sm font-medium text-white hover:bg-slate-700 shadow-sm"
                   >
                       Próximo
@@ -1144,14 +1233,14 @@ const ClientEditor: React.FC = () => {
                 
                  <div className="mt-8 px-6 pb-6 flex items-center justify-between pt-6">
                     <button 
-                        onClick={() => setActiveTab('irradiation')} 
+                        onClick={() => handleNextTab('irradiation')} 
                         className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                     >
                         <ArrowLeft size={16} />
                         Voltar
                     </button>
                     <button 
-                        onClick={() => setActiveTab('status')} 
+                        onClick={() => handleNextTab('status')} 
                         className="flex items-center gap-2 rounded-lg bg-slate-800 px-6 py-2 text-sm font-medium text-white hover:bg-slate-700 shadow-sm"
                     >
                         Próximo
@@ -1177,7 +1266,7 @@ const ClientEditor: React.FC = () => {
                           className="flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-600 hover:bg-blue-100 border border-blue-200"
                         >
                            <DownloadCloud size={14} />
-                           Simular Importação Solfácil
+                           Simular Importação
                         </button>
                       </div>
 
@@ -1424,14 +1513,14 @@ const ClientEditor: React.FC = () => {
                       </div>
                   </div>
 
-                  {/* 45 Day Notification Logic */}
+                  {/* 45 Day Notification Logic + Share Proposal */}
                   {client.status === 'proposal_sent' && (
                       <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
                           <div className="flex items-start gap-3">
                               <div className="rounded-full bg-amber-100 p-2 text-amber-600">
                                   <Clock size={24} />
                               </div>
-                              <div>
+                              <div className="flex-1">
                                   <h3 className="font-bold text-amber-800">Acompanhamento Comercial</h3>
                                   <p className="mt-1 text-sm text-amber-700">
                                       A proposta foi enviada. É importante manter contato com o cliente para sanar dúvidas e fechar o negócio.
@@ -1446,6 +1535,44 @@ const ClientEditor: React.FC = () => {
                                       </div>
                                   </div>
                               </div>
+                          </div>
+
+                          <div className="mt-6 border-t border-amber-200 pt-5">
+                             <div className="flex items-center gap-2 mb-3">
+                                <Share2 size={16} className="text-amber-700"/>
+                                <h4 className="text-sm font-bold text-amber-800 uppercase tracking-wide">Compartilhar Proposta</h4>
+                             </div>
+                             
+                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                  <button
+                                      onClick={generatePDF}
+                                      className="flex items-center justify-center gap-2 rounded-lg bg-white border border-amber-200 px-4 py-2.5 text-sm font-medium text-amber-700 shadow-sm hover:bg-amber-100 transition"
+                                  >
+                                      <FileDown size={18} />
+                                      1. Baixar PDF
+                                  </button>
+                                  
+                                  <div className="hidden sm:block"></div> {/* Spacer to keep layout clean if only 2 cols */}
+
+                                  <button
+                                      onClick={handleShareWhatsApp}
+                                      className="flex items-center justify-center gap-2 rounded-lg bg-[#25D366] text-white px-4 py-2.5 text-sm font-medium shadow-sm hover:bg-[#128C7E] transition border border-transparent"
+                                  >
+                                      <MessageCircle size={18} />
+                                      2. WhatsApp
+                                  </button>
+                                  
+                                  <button
+                                      onClick={handleShareEmail}
+                                      className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 text-white px-4 py-2.5 text-sm font-medium shadow-sm hover:bg-blue-700 transition border border-transparent"
+                                  >
+                                      <Mail size={18} />
+                                      2. E-mail
+                                  </button>
+                             </div>
+                             <p className="mt-3 text-[10px] text-amber-800 opacity-70">
+                                  *Salve o PDF no seu dispositivo antes de enviar para anexá-lo à mensagem.
+                             </p>
                           </div>
                       </div>
                   )}
@@ -1464,7 +1591,7 @@ const ClientEditor: React.FC = () => {
 
                   <div className="mt-8 flex items-center justify-between border-t border-slate-100 pt-6">
                       <button 
-                          onClick={() => setActiveTab('results')} 
+                          onClick={() => handleNextTab('results')} 
                           className="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                       >
                           <ArrowLeft size={16} />
